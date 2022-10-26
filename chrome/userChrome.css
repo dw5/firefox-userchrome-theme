@@ -55,3 +55,7 @@
 }
 
 /* Tweak Options as of 8/13/2021; Generated Fri Sep 17 2021 19:21:49 GMT+0300 (Eastern European Summer Time) */
+
+/* hide firefox account login https://www.reddit.com/r/FirefoxCSS/comments/yck6gt/comment/itmlvwe/?context=3*/
+#appMenu-fxa-label2 #appMenu-header-description {display: none !important;}
+#appMenu-popup #appMenu-fxa-label2::before {content: 'Firefox account' !important;}
