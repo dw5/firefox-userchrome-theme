@@ -74,3 +74,9 @@ user_pref("mousewheel.system_scroll_override_on_root_content.enabled", false); /
 user_pref("mousewheel.transaction.timeout",                  1500);            ///     1500
 user_pref("toolkit.scrollbox.horizontalScrollDistance",         4);            ///        5
 user_pref("toolkit.scrollbox.verticalScrollDistance",           3);            ///        3
+
+// TEST: STOP Leaking over one website input fields to other websites
+user_pref("browser.formfill.enable", false);
+user_pref("browser.formfill.expire_days", 0);
+user_pref("browser.formfill.saveHttpsForms", false);
+
