@@ -81,6 +81,7 @@ user_pref("browser.formfill.expire_days", 0);
 user_pref("browser.formfill.saveHttpsForms", false);
 
 // NO GOOGLE https://gitlab.com/librewolf-community/settings/-/blob/librewolf.cfg
+Services.prefs.clearUserPref("browser.newtabpage.pinned");
 /** [SECTION] NEW TAB PAGE
  * we want NTP to display nothing but the search bar without anything distracting.
  * the three prefs below are just for minimalism and they should be easy to revert for users.
