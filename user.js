@@ -80,3 +80,31 @@ user_pref("browser.formfill.enable", false);
 user_pref("browser.formfill.expire_days", 0);
 user_pref("browser.formfill.saveHttpsForms", false);
 
+// NO GOOGLE https://gitlab.com/librewolf-community/settings/-/blob/librewolf.cfg
+/** [SECTION] NEW TAB PAGE
+ * we want NTP to display nothing but the search bar without anything distracting.
+ * the three prefs below are just for minimalism and they should be easy to revert for users.
+ */
+defaultPref("browser.newtabpage.activity-stream.section.highlights.includeDownloads", false);
+defaultPref("browser.newtabpage.activity-stream.section.highlights.includeVisited", false);
+defaultPref("browser.newtabpage.activity-stream.feeds.topsites", false);
+// hide stories and sponsored content from Firefox Home
+lockPref("browser.newtabpage.activity-stream.feeds.section.topstories", false);
+lockPref("browser.newtabpage.activity-stream.showSponsored", false);
+lockPref("browser.newtabpage.activity-stream.showSponsoredTopSites", false);
+// disable telemetry in Firefox Home
+lockPref("browser.newtabpage.activity-stream.feeds.telemetry", false);
+lockPref("browser.newtabpage.activity-stream.telemetry", false);
+// hide stories UI in about:preferences#home, empty highlights list
+lockPref("browser.newtabpage.activity-stream.feeds.section.topstories.options", "{\"hidden\":true}");
+lockPref("browser.newtabpage.activity-stream.default.sites", "");
+
+/** [SECTION] RECOMMENDED
+ * disable all "recommend as you browse" activity.
+ */
+lockPref("browser.newtabpage.activity-stream.asrouter.userprefs.cfr.features", false);
+lockPref("browser.newtabpage.activity-stream.asrouter.userprefs.cfr.addons", false);
+
+// IN CASE FAILS...
+defaultPref("browser.newtabpage.pinned", "");
+lockPref("browser.newtabpage.pinned", "");
