@@ -109,3 +109,6 @@ lockPref("browser.newtabpage.activity-stream.asrouter.userprefs.cfr.addons", fal
 // IN CASE FAILS...
 defaultPref("browser.newtabpage.pinned", "");
 lockPref("browser.newtabpage.pinned", "");
+
+// Moz://a : The advertising company
+user_pref("dom.private-attribution.submission.enabled", false);
