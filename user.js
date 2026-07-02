@@ -1,5 +1,10 @@
 user_pref("extensions.unifiedExtensions.enabled", false); // 109ish undo copying google chrome (copypasta) extension menu thing. #MakeFirefoxGreatAgain
 
+// Don't open the "What's New" page after Firefox updates (firefox.com/whatsnew/...)
+user_pref("browser.startup.homepage_override.enabled", false); 
+// Suppress the whatsnew page that opens on first startup after an update
+user_pref("browser.startup.homepage_override.mstone", "ignore");
+
 // ** Theme Related Options ****************************************************
 // userchrome.css usercontent.css activate
 user_pref("toolkit.legacyUserProfileCustomizations.stylesheets", true);
