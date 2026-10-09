@@ -8,10 +8,11 @@
 #   ./install.sh -y               non-interactive (prints sudo cmds instead of asking)
 #
 # what it installs:
-#   chrome/     -> <profile>/chrome/          (userChrome.css)
-#   user.js     -> <profile>/user.js
+#   chrome/       -> <profile>/chrome/          (userChrome.css)
+#   user.js       -> <profile>/user.js
 #   autoconfig.js -> <firefox-install>/defaults/pref/
-#   mozilla.cfg   -> <firefox-install>/       (may need sudo; skipped on flatpak/snap)
+#   mozilla.cfg   -> <firefox-install>/         (may need sudo; skipped on flatpak/snap)
+#   policies.json -> <firefox-install>/distribution/   (duckduckgo default + uBlock Origin)
 #
 # existing chrome/ and user.js are backed up as *.bak-<timestamp> first.
 
@@ -20,6 +21,7 @@ set -u
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 MARKER="firefox-userchrome-theme"
 TS="$(date +%Y%m%d-%H%M%S)"
+XDG_CONF="${XDG_CONFIG_HOME:-$HOME/.config}"
 
 # --- output helpers ----------------------------------------------------------
 C_G=""; C_Y=""; C_R=""; C_0=""
@@ -38,6 +40,8 @@ usage: install.sh [options]
     chrome/                       -> <profile>/chrome/
     user.js                       -> <profile>/user.js
     autoconfig.js + mozilla.cfg   -> firefox install dir (asks for root)
+    policies.json                 -> firefox install dir/distribution/
+                                    (duckduckgo default + uBlock Origin)
 
 options:
   -p, --profile NAME   target profile (dir name or full path); skips the menu
@@ -68,6 +72,7 @@ done
 [ -f "$SCRIPT_DIR/user.js" ]    || die "user.js not found next to install.sh"
 [ -f "$SCRIPT_DIR/autoconfig.js" ] || die "autoconfig.js not found next to install.sh"
 [ -f "$SCRIPT_DIR/mozilla.cfg" ]   || die "mozilla.cfg not found next to install.sh"
+[ -f "$SCRIPT_DIR/policies.json" ] || die "policies.json not found next to install.sh"
 [ -d "$SCRIPT_DIR/chrome" ]     || die "chrome/ not found next to install.sh"
 
 # --- profile discovery -------------------------------------------------------
@@ -93,25 +98,30 @@ scan_root() {
   local root="$1" ini="$root/profiles.ini"
   [ -f "$ini" ] || return 0
 
-  local rel
-  # profiles referenced by an [Install...] section = what firefox actually launches
+  local rel before="${#PROFILE_DIRS[@]}"
+
+  # profiles referenced by an [Install...] section = what firefox actually
+  # launches (authoritative). when one exists, legacy Default=1 flags are
+  # ignored - they often point at stale leftover profiles.
   while IFS= read -r rel; do
     [ -n "$rel" ] && add_profile "$root" "$rel"
   done < <(awk -v RS= -F'\n' '
       /^\[Install/ { for (i = 1; i <= NF; i++) if ($i ~ /^Default=/) { sub(/^Default=/, "", $i); print $i } }
     ' "$ini")
 
-  # classic [ProfileN] sections flagged Default=1
-  while IFS= read -r rel; do
-    [ -n "$rel" ] && add_profile "$root" "$rel"
-  done < <(awk -v RS= -F'\n' '
-      /^\[Profile/ && /(^|\n)Default=1(\n|$)/ {
-        for (i = 1; i <= NF; i++) if ($i ~ /^Path=/) { sub(/^Path=/, "", $i); print $i }
-      }
-    ' "$ini")
+  # fall back to classic [ProfileN] sections flagged Default=1
+  if [ "${#PROFILE_DIRS[@]}" -eq "$before" ]; then
+    while IFS= read -r rel; do
+      [ -n "$rel" ] && add_profile "$root" "$rel"
+    done < <(awk -v RS= -F'\n' '
+        /^\[Profile/ && /(^|\n)Default=1(\n|$)/ {
+          for (i = 1; i <= NF; i++) if ($i ~ /^Path=/) { sub(/^Path=/, "", $i); print $i }
+        }
+      ' "$ini")
+  fi
 
   # fallback: glob common profile dir names
-  if [ "${#PROFILE_DIRS[@]}" -eq 0 ]; then
+  if [ "${#PROFILE_DIRS[@]}" -eq "$before" ]; then
     for rel in "$root"/*.default-release "$root"/*.default "$root"/*.default-esr \
                "$root"/profiles/*.default-release "$root"/profiles/*.default; do
       [ -d "$rel" ] && add_profile_dir "$rel"
@@ -122,7 +132,8 @@ scan_root() {
 choose_profile() {
   if [ "${#PROFILE_DIRS[@]}" -eq 0 ]; then
     die "no firefox profile found.
-searched: ~/.mozilla/firefox, flatpak, snap, ~/.librewolf, ~/.waterfox
+searched: ~/.mozilla/firefox, ~/.config/mozilla/firefox (firefox 147+),
+flatpak, snap, librewolf, waterfox.
 open about:profiles in firefox to find your profile root dir."
   fi
 
@@ -174,8 +185,12 @@ backup_path() {  # $1 = existing file or dir -> move to *.bak-$TS
   mv -- "$1" "$bak" && info "backed up $(basename -- "$1") -> $(basename -- "$bak")"
 }
 
-is_ours() {  # $1 = file; true if it carries our marker comment
-  [ -f "$1" ] && grep -q "$MARKER" "$1" 2>/dev/null
+is_ours() {  # $1 = file; true if it was installed by this script
+  [ -f "$1" ] || return 1
+  grep -q "$MARKER" "$1" 2>/dev/null && return 0
+  # policies.json is plain json (no comments allowed), so identify ours by content
+  grep -q 'uBlock0@raymondhill.net' "$1" 2>/dev/null &&
+    grep -q 'DuckDuckGo' "$1" 2>/dev/null
 }
 
 place_file() {  # $1 = src, $2 = dst; backs up foreign files instead of clobbering
@@ -188,6 +203,9 @@ place_file() {  # $1 = src, $2 = dst; backs up foreign files instead of clobberi
 firefox_running() {
   pgrep -x firefox >/dev/null 2>&1 && return 0
   pgrep -x firefox-bin >/dev/null 2>&1 && return 0
+  pgrep -x firefox-esr >/dev/null 2>&1 && return 0
+  pgrep -x librewolf >/dev/null 2>&1 && return 0
+  pgrep -x waterfox >/dev/null 2>&1 && return 0
   pgrep -f '/firefox/firefox( |$)' >/dev/null 2>&1 && return 0
   return 1
 }
@@ -198,15 +216,74 @@ warn_if_running() {
   fi
 }
 
-# --- autoconfig (mozilla.cfg) ------------------------------------------------
-FLATPAK=0
-SNAP=0
-[ -d "$HOME/.var/app/org.mozilla.firefox" ] && FLATPAK=1
-[ -d "$HOME/snap/firefox" ] && SNAP=1
-if command -v flatpak >/dev/null 2>&1 && flatpak info org.mozilla.firefox >/dev/null 2>&1; then
-  FLATPAK=1
-fi
+# Apply saved toolbar customization once per install, never through user.js.
+tidy_navbar() {
+  if firefox_running; then
+    warn "navbar tidy skipped: firefox is running and would overwrite prefs.js; fully quit it and rerun the installer"
+    return 0
+  fi
+  [ -f "$PROFILE_DIR/prefs.js" ] || return 0
+  if ! command -v python3 >/dev/null 2>&1; then
+    warn "navbar tidy skipped: python3 is not installed"
+    return 0
+  fi
+  python3 - "$PROFILE_DIR/prefs.js" "$TS" <<'PYTHON'
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import sys
+import tempfile
 
+path = Path(sys.argv[1])
+temporary = None
+try:
+    original = path.read_bytes()
+    text = original.decode("utf-8")
+    pattern = re.compile(r'^(\s*user_pref\("browser\.uiCustomization\.state",\s*)("(?:[^"\\\r\n]|\\.)*")(\s*\);[^\r\n]*)', re.MULTILINE)
+    matches = list(pattern.finditer(text))
+    if not matches:
+        if re.search(r'^\s*user_pref\("browser\.uiCustomization\.state"', text, re.MULTILINE):
+            raise ValueError("malformed customization pref")
+        sys.exit(0)
+    if len(matches) != 1:
+        raise ValueError("multiple customization prefs")
+    match = matches[0]
+    state = json.loads(json.loads(match.group(2)))
+    navbar = state["placements"]["nav-bar"]
+    if not isinstance(navbar, list) or not all(isinstance(item, str) for item in navbar):
+        raise ValueError("navbar placements must be an array of strings")
+    if "urlbar-container" not in navbar:
+        raise ValueError("navbar has no urlbar-container")
+    tidy = [item for item in navbar if item != "toolbarspring" and not re.fullmatch(r"customizableui-special-spring\d+", item)]
+    if "search-container" not in tidy:
+        tidy.insert(tidy.index("urlbar-container") + 1, "search-container")
+    if tidy == navbar:
+        sys.exit(0)
+    state["placements"]["nav-bar"] = tidy
+    quoted = json.dumps(json.dumps(state, ensure_ascii=False, separators=(",", ":")), ensure_ascii=False)
+    updated = (text[:match.start(2)] + quoted + text[match.end(2):]).encode("utf-8")
+    backup = Path(str(path) + ".bak-" + sys.argv[2])
+    with backup.open("xb") as out:
+        out.write(original)
+    shutil.copystat(path, backup)
+    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".prefs.js-", delete=False) as out:
+        temporary = out.name
+        out.write(updated)
+    shutil.copystat(path, temporary)
+    os.replace(temporary, path)
+    temporary = None
+    print("==> tidied navbar; backed up prefs.js -> " + backup.name)
+except Exception as error:
+    print("warning: navbar tidy skipped: " + str(error), file=sys.stderr)
+finally:
+    if temporary is not None:
+        os.unlink(temporary)
+PYTHON
+}
+
+# --- autoconfig (mozilla.cfg) ------------------------------------------------
 is_install_dir() {
   [ -d "$1" ] || return 1
   { [ -x "$1/firefox" ] || [ -x "$1/firefox-bin" ] || [ -x "$1/firefox-esr" ]; } || return 1
@@ -230,11 +307,18 @@ find_firefox_install_dir() {
 }
 
 install_autoconfig() {
-  if [ "$FLATPAK" = 1 ] || [ "$SNAP" = 1 ]; then
-    warn "flatpak/snap firefox detected - skipping autoconfig.js/mozilla.cfg"
-    warn "(the firefox install dir is read-only there; chrome/ + user.js are fully installed)"
-    return 0
-  fi
+  # profiles inside a flatpak/snap sandbox home have a read-only install dir
+  # reachable only from inside the sandbox - skip the install-dir part there.
+  # NOTE: deliberately path-based, not "is flatpak installed": leftover
+  # ~/.var/app dirs must not disable the feature for normal profiles.
+  case "$PROFILE_DIR" in
+    "$HOME"/.var/app/*|"$HOME"/snap/*)
+      warn "flatpak/snap firefox profile detected - skipping autoconfig.js/mozilla.cfg/policies.json"
+      warn "(chrome/ + user.js are fully installed; duckduckgo default + uBlock Origin"
+      warn " and the locked new-tab prefs must be set up manually in that case)"
+      return 0
+      ;;
+  esac
 
   local install_dir
   install_dir="$(find_firefox_install_dir)" || {
@@ -244,20 +328,22 @@ install_autoconfig() {
   }
   info "firefox install dir: $install_dir"
 
-  local prefdir="$install_dir/defaults/pref"
+  local prefdir="$install_dir/defaults/pref" distdir="$install_dir/distribution"
   if { [ -d "$prefdir" ] && [ -w "$prefdir" ]; } || { [ ! -d "$prefdir" ] && [ -w "$install_dir" ]; }; then
-    mkdir -p -- "$prefdir"
+    mkdir -p -- "$prefdir" "$distdir"
     place_file "$SCRIPT_DIR/autoconfig.js" "$prefdir/autoconfig.js"
     place_file "$SCRIPT_DIR/mozilla.cfg" "$install_dir/mozilla.cfg"
-    info "installed autoconfig.js + mozilla.cfg"
+    place_file "$SCRIPT_DIR/policies.json" "$distdir/policies.json"
+    info "installed autoconfig.js + mozilla.cfg + policies.json (duckduckgo default, uBlock Origin)"
     return 0
   fi
 
   if [ "$ASSUME_YES" = 1 ] || [ ! -t 0 ]; then
-    warn "no write access to $install_dir - to finish the mozilla.cfg part, run:"
-    echo "    sudo mkdir -p '$prefdir'"
+    warn "no write access to $install_dir - to finish the mozilla.cfg + policies part, run:"
+    echo "    sudo mkdir -p '$prefdir' '$distdir'"
     echo "    sudo cp -f '$SCRIPT_DIR/autoconfig.js' '$prefdir/'"
     echo "    sudo cp -f '$SCRIPT_DIR/mozilla.cfg' '$install_dir/'"
+    echo "    sudo cp -f '$SCRIPT_DIR/policies.json' '$distdir/'"
     return 0
   fi
 
@@ -269,11 +355,12 @@ install_autoconfig() {
   fi
   case "$a" in
     y|Y|yes|Yes)
-      sudo mkdir -p -- "$prefdir" \
+      sudo mkdir -p -- "$prefdir" "$distdir" \
         && sudo cp -f -- "$SCRIPT_DIR/autoconfig.js" "$prefdir/" \
         && sudo cp -f -- "$SCRIPT_DIR/mozilla.cfg" "$install_dir/" \
-        && info "installed autoconfig.js + mozilla.cfg (root)" \
-        || warn "sudo step failed - mozilla.cfg part skipped"
+        && sudo cp -f -- "$SCRIPT_DIR/policies.json" "$distdir/" \
+        && info "installed autoconfig.js + mozilla.cfg + policies.json (root)" \
+        || warn "sudo step failed - mozilla.cfg/policies part skipped"
       ;;
     *) warn "skipped autoconfig install (rerun later to retry)" ;;
   esac
@@ -283,7 +370,8 @@ uninstall_autoconfig() {
   local install_dir
   install_dir="$(find_firefox_install_dir)" || return 0
   local f
-  for f in "$install_dir/defaults/pref/autoconfig.js" "$install_dir/mozilla.cfg"; do
+  for f in "$install_dir/defaults/pref/autoconfig.js" "$install_dir/mozilla.cfg" \
+           "$install_dir/distribution/policies.json"; do
     [ -e "$f" ] || continue
     if is_ours "$f"; then
       rm -f -- "$f" && info "removed $f"
@@ -308,6 +396,7 @@ do_install() {
     || die "failed to copy user.js into $PROFILE_DIR"
   info "installed chrome/ and user.js"
 
+  tidy_navbar
   install_autoconfig
 
   echo
@@ -355,11 +444,16 @@ do_uninstall() {
 
 # --- main --------------------------------------------------------------------
 PROFILE_ROOTS=(
-  "$HOME/.mozilla/firefox"
-  "$HOME/.var/app/org.mozilla.firefox/.mozilla/firefox"
-  "$HOME/snap/firefox/common/.mozilla/firefox"
+  "$HOME/.mozilla/firefox"                        # classic location (MOZ_LEGACY_PROFILES=1)
+  "$XDG_CONF/mozilla/firefox"                     # firefox 147+ default (xdg)
+  "$HOME/.var/app/org.mozilla.firefox/.mozilla/firefox"        # flatpak (legacy)
+  "$HOME/.var/app/org.mozilla.firefox/.config/mozilla/firefox" # flatpak (firefox 147+)
+  "$HOME/snap/firefox/common/.mozilla/firefox"                 # snap (legacy)
+  "$HOME/snap/firefox/common/.config/mozilla/firefox"          # snap (firefox 147+)
   "$HOME/.librewolf"
+  "$XDG_CONF/librewolf"
   "$HOME/.waterfox"
+  "$XDG_CONF/waterfox"
 )
 
 for root in "${PROFILE_ROOTS[@]}"; do

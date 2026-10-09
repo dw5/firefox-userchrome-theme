@@ -8,6 +8,7 @@
     user.js        -> <profile>\user.js
     autoconfig.js  -> <firefox install dir>\defaults\pref\
     mozilla.cfg    -> <firefox install dir>\      (may prompt for admin via UAC)
+    policies.json  -> <firefox install dir>\distribution\  (duckduckgo default + uBlock Origin)
 
   existing chrome\ and user.js are backed up as *.bak-<timestamp> first.
 
@@ -47,10 +48,11 @@ $ProfileRoots = @(
 )
 
 # --- repo sanity -------------------------------------------------------------
-if (-not (Test-Path -LiteralPath (Join-Path $RepoDir 'user.js')))      { Fail "user.js not found next to install.ps1" }
+if (-not (Test-Path -LiteralPath (Join-Path $RepoDir 'user.js')))       { Fail "user.js not found next to install.ps1" }
 if (-not (Test-Path -LiteralPath (Join-Path $RepoDir 'autoconfig.js'))) { Fail "autoconfig.js not found next to install.ps1" }
 if (-not (Test-Path -LiteralPath (Join-Path $RepoDir 'mozilla.cfg')))   { Fail "mozilla.cfg not found next to install.ps1" }
-if (-not (Test-Path -LiteralPath (Join-Path $RepoDir 'chrome')))       { Fail "chrome\ not found next to install.ps1" }
+if (-not (Test-Path -LiteralPath (Join-Path $RepoDir 'policies.json'))) { Fail "policies.json not found next to install.ps1" }
+if (-not (Test-Path -LiteralPath (Join-Path $RepoDir 'chrome')))        { Fail "chrome\ not found next to install.ps1" }
 
 # --- profile discovery -------------------------------------------------------
 function Get-IniSections([string]$path) {
@@ -168,7 +170,10 @@ function Backup-Item([string]$path) {
 
 function Test-IsOurs([string]$path) {
     if (-not (Test-Path -LiteralPath $path)) { return $false }
-    return [bool](Select-String -LiteralPath $path -Pattern $Marker -SimpleMatch -Quiet)
+    if (Select-String -LiteralPath $path -Pattern $Marker -SimpleMatch -Quiet) { return $true }
+    # policies.json is plain json (no comments allowed), so identify ours by content
+    return [bool]((Select-String -LiteralPath $path -Pattern 'uBlock0@raymondhill.net' -SimpleMatch -Quiet) -and
+                  (Select-String -LiteralPath $path -Pattern 'DuckDuckGo' -SimpleMatch -Quiet))
 }
 
 function Place-File([string]$src, [string]$dst) {
@@ -179,12 +184,85 @@ function Place-File([string]$src, [string]$dst) {
 }
 
 function Test-FirefoxRunning {
-    if (Get-Process -Name firefox -ErrorAction SilentlyContinue) {
+    return [bool](Get-Process -Name firefox, firefox-esr, librewolf, waterfox -ErrorAction SilentlyContinue)
+}
+
+function Warn-IfFirefoxRunning {
+    if (Test-FirefoxRunning) {
         Warn 'firefox is running - restart it after this to apply changes'
     }
 }
 
-# --- autoconfig (mozilla.cfg) ------------------------------------------------
+# Apply saved toolbar customization once per install, never through user.js.
+function Invoke-NavbarTidy([string]$profile) {
+    if (Test-FirefoxRunning) {
+        Warn 'navbar tidy skipped: firefox is running and would overwrite prefs.js; fully quit it and rerun the installer'
+        return
+    }
+    $path = Join-Path $profile 'prefs.js'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return }
+    $temporary = $null
+    try {
+        $utf8 = New-Object System.Text.UTF8Encoding($false, $true)
+        $text = [System.IO.File]::ReadAllText($path, $utf8)
+        $pattern = '(?m)^(\s*user_pref\("browser\.uiCustomization\.state",\s*)("(?:[^"\\\r\n]|\\.)*")(\s*\);[^\r\n]*)'
+        $found = [regex]::Matches($text, $pattern)
+        if ($found.Count -eq 0) {
+            if ($text -match '(?m)^\s*user_pref\("browser\.uiCustomization\.state"') {
+                throw 'malformed customization pref'
+            }
+            return
+        }
+        if ($found.Count -ne 1) { throw 'multiple customization prefs' }
+        $match = $found[0]
+        $json = ConvertFrom-Json -InputObject $match.Groups[2].Value
+        $state = ConvertFrom-Json -InputObject $json
+        $navbar = $state.placements.'nav-bar'
+        if ($navbar -isnot [System.Array]) { throw 'navbar placements must be an array of strings' }
+        foreach ($item in $navbar) {
+            if ($item -isnot [string]) { throw 'navbar placements must be an array of strings' }
+        }
+        if ($navbar -cnotcontains 'urlbar-container') { throw 'navbar has no urlbar-container' }
+        $tidy = New-Object 'System.Collections.Generic.List[string]'
+        foreach ($item in $navbar) {
+            if ($item -cne 'toolbarspring' -and $item -cnotmatch '^customizableui-special-spring\d+$') {
+                $tidy.Add($item)
+            }
+        }
+        if (-not $tidy.Contains('search-container')) {
+            $tidy.Insert($tidy.IndexOf('urlbar-container') + 1, 'search-container')
+        }
+        $changed = $tidy.Count -ne $navbar.Count
+        if (-not $changed) {
+            for ($i = 0; $i -lt $navbar.Count; $i++) {
+                if ($tidy[$i] -cne $navbar[$i]) { $changed = $true; break }
+            }
+        }
+        if (-not $changed) { return }
+        $state.placements.'nav-bar' = $tidy.ToArray()
+        $json = ConvertTo-Json -InputObject $state -Depth 100 -Compress
+        $quoted = ConvertTo-Json -InputObject $json -Compress
+        $group = $match.Groups[2]
+        $updated = $text.Substring(0, $group.Index) + $quoted + $text.Substring($group.Index + $group.Length)
+        $backup = "$path.bak-$Stamp"
+        [System.IO.File]::Copy($path, $backup, $false)
+        $temporary = Join-Path $profile ('.prefs.js-' + [guid]::NewGuid().ToString('N'))
+        [System.IO.File]::WriteAllText($temporary, $updated, $utf8)
+        [System.IO.File]::Replace($temporary, $path, $null)
+        $temporary = $null
+        Info ("tidied navbar; backed up prefs.js -> {0}" -f (Split-Path -Leaf $backup))
+    }
+    catch {
+        Warn ("navbar tidy skipped: {0}" -f $_.Exception.Message)
+    }
+    finally {
+        if ($temporary -and (Test-Path -LiteralPath $temporary)) {
+            Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+# --- autoconfig + policies ---------------------------------------------------
 function Get-FirefoxInstallDir {
     $dirs = @()
 
@@ -231,49 +309,63 @@ function Test-CanWrite([string]$dir) {
 function Install-Autoconfig {
     $installDir = Get-FirefoxInstallDir
     if (-not $installDir) {
-        Warn 'could not locate the firefox install dir - skipping mozilla.cfg part'
-        Warn '(chrome\ + user.js are installed; the locked new-tab prefs just won''t apply)'
+        Warn 'could not locate the firefox install dir - skipping mozilla.cfg/policies part'
+        Warn '(chrome\ + user.js are installed; duckduckgo default + uBlock auto-install just won''t apply)'
         return
     }
     Info "firefox install dir: $installDir"
 
     $prefDir = Join-Path $installDir 'defaults\pref'
+    $distDir = Join-Path $installDir 'distribution'
+
     if (Test-CanWrite $prefDir) {
-        Place-File (Join-Path $RepoDir 'autoconfig.js') (Join-Path $prefDir 'autoconfig.js')
-        Place-File (Join-Path $RepoDir 'mozilla.cfg')   (Join-Path $installDir 'mozilla.cfg')
-        Info 'installed autoconfig.js + mozilla.cfg'
+        try {
+            New-Item -ItemType Directory -Path $distDir -Force -ErrorAction Stop | Out-Null
+            Place-File (Join-Path $RepoDir 'autoconfig.js') (Join-Path $prefDir 'autoconfig.js')
+            Place-File (Join-Path $RepoDir 'mozilla.cfg')   (Join-Path $installDir 'mozilla.cfg')
+            Place-File (Join-Path $RepoDir 'policies.json') (Join-Path $distDir 'policies.json')
+            Info 'installed autoconfig.js + mozilla.cfg + policies.json (duckduckgo default, uBlock Origin)'
+        }
+        catch {
+            Warn ("failed to write install dir files: {0}" -f $_.Exception.Message)
+        }
         return
     }
 
     if ($Yes -or -not $Interactive) {
-        Warn "no write access to $installDir - to finish the mozilla.cfg part, run in an admin powershell:"
-        Write-Host "  New-Item -ItemType Directory -Force '$prefDir'"
+        Warn "no write access to $installDir - to finish the mozilla.cfg + policies part, run in an admin powershell:"
+        Write-Host "  New-Item -ItemType Directory -Force '$prefDir', '$distDir'"
         Write-Host "  Copy-Item '$RepoDir\autoconfig.js' '$prefDir\' -Force"
         Write-Host "  Copy-Item '$RepoDir\mozilla.cfg' '$installDir\' -Force"
+        Write-Host "  Copy-Item '$RepoDir\policies.json' '$distDir\' -Force"
         return
     }
 
     $a = Read-Host "write access to $installDir requires admin - elevate now? [Y/n]"
     if ($a -match '^(n|no)$') {
-        Warn 'skipped autoconfig install (rerun later to retry)'
+        Warn 'skipped autoconfig/policies install (rerun later to retry)'
         return
     }
-    $inner = "New-Item -ItemType Directory -Force -Path '$prefDir' | Out-Null; " +
+    $inner = "New-Item -ItemType Directory -Force -Path '$prefDir', '$distDir' | Out-Null; " +
              "Copy-Item '$RepoDir\autoconfig.js' '$prefDir\' -Force; " +
-             "Copy-Item '$RepoDir\mozilla.cfg' '$installDir\' -Force"
+             "Copy-Item '$RepoDir\mozilla.cfg' '$installDir\' -Force; " +
+             "Copy-Item '$RepoDir\policies.json' '$distDir\' -Force"
     try {
         Start-Process powershell.exe -Verb RunAs -Wait -ArgumentList '-NoProfile', '-Command', $inner
-        Info 'installed autoconfig.js + mozilla.cfg (elevated)'
+        Info 'installed autoconfig.js + mozilla.cfg + policies.json (elevated)'
     }
     catch {
-        Warn "elevation cancelled or failed - mozilla.cfg part skipped"
+        Warn "elevation cancelled or failed - mozilla.cfg/policies part skipped"
     }
 }
 
 function Uninstall-Autoconfig {
     $installDir = Get-FirefoxInstallDir
     if (-not $installDir) { return }
-    foreach ($f in @((Join-Path $installDir 'defaults\pref\autoconfig.js'), (Join-Path $installDir 'mozilla.cfg'))) {
+    foreach ($f in @(
+        (Join-Path $installDir 'defaults\pref\autoconfig.js'),
+        (Join-Path $installDir 'mozilla.cfg'),
+        (Join-Path $installDir 'distribution\policies.json'))) {
         if (Test-Path -LiteralPath $f) {
             if (Test-IsOurs $f) {
                 Remove-Item -LiteralPath $f -Force
@@ -290,7 +382,7 @@ function Uninstall-Autoconfig {
 function Invoke-Install([string[]]$dirs) {
     $p = Select-ProfileDir $dirs
     Info "profile: $p"
-    Test-FirefoxRunning
+    Warn-IfFirefoxRunning
 
     Backup-Item (Join-Path $p 'chrome')
     Backup-Item (Join-Path $p 'user.js')
@@ -299,6 +391,7 @@ function Invoke-Install([string[]]$dirs) {
     Copy-Item -Force -LiteralPath (Join-Path $RepoDir 'user.js') -Destination (Join-Path $p 'user.js')
     Info 'installed chrome\ and user.js'
 
+    Invoke-NavbarTidy $p
     Install-Autoconfig
 
     Write-Host ''
@@ -308,7 +401,7 @@ function Invoke-Install([string[]]$dirs) {
 function Invoke-Uninstall([string[]]$dirs) {
     $p = Select-ProfileDir $dirs
     Info "profile: $p"
-    Test-FirefoxRunning
+    Warn-IfFirefoxRunning
 
     $chromeBaks = @(Get-ChildItem -LiteralPath $p -Filter 'chrome.bak-*' -Directory -ErrorAction SilentlyContinue | Sort-Object Name)
     $jsBaks     = @(Get-ChildItem -LiteralPath $p -Filter 'user.js.bak-*' -File -ErrorAction SilentlyContinue | Sort-Object Name)
