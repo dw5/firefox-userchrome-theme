@@ -52,8 +52,8 @@ pick a profile when asked, then restart firefox. done.
 * fully quit Firefox (not just close its windows) before installing. while it is
   running, the installer skips navbar tidying with a warning; quit and rerun.
 * once per install, the installer edits the profile's own saved toolbar state in
-  `prefs.js`: removes flexible spacers and inserts the search box directly after
-  the urlbar if the search box is absent. an existing search box stays in place.
+  `prefs.js`: removes flexible spacers and puts the search box directly after
+  the urlbar (adding it if absent, moving it if it sits anywhere else).
 * before changing `prefs.js`, it copies it to `prefs.js.bak-<timestamp>`.
   absent customization state is skipped silently; fresh profiles get the search
   box through `browser.search.widget.inNavBar` in `user.js`.

@@ -256,12 +256,17 @@ try:
         raise ValueError("navbar placements must be an array of strings")
     if "urlbar-container" not in navbar:
         raise ValueError("navbar has no urlbar-container")
-    tidy = [item for item in navbar if item != "toolbarspring" and not re.fullmatch(r"customizableui-special-spring\d+", item)]
-    if "search-container" not in tidy:
-        tidy.insert(tidy.index("urlbar-container") + 1, "search-container")
-    if tidy == navbar:
+    placements = state["placements"]
+    # the search box goes directly after the urlbar, wherever it was before
+    # (another nav-bar slot or another toolbar), so drop it everywhere first
+    before = {area: list(items) for area, items in placements.items() if isinstance(items, list)}
+    for area, items in before.items():
+        placements[area] = [item for item in items if item != "search-container"]
+    tidy = [item for item in placements["nav-bar"] if item != "toolbarspring" and not re.fullmatch(r"customizableui-special-spring\d+", item)]
+    tidy.insert(tidy.index("urlbar-container") + 1, "search-container")
+    placements["nav-bar"] = tidy
+    if all(placements[area] == items for area, items in before.items()):
         sys.exit(0)
-    state["placements"]["nav-bar"] = tidy
     quoted = json.dumps(json.dumps(state, ensure_ascii=False, separators=(",", ":")), ensure_ascii=False)
     updated = (text[:match.start(2)] + quoted + text[match.end(2):]).encode("utf-8")
     backup = Path(str(path) + ".bak-" + sys.argv[2])

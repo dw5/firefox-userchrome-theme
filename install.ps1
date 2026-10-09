@@ -194,12 +194,12 @@ function Warn-IfFirefoxRunning {
 }
 
 # Apply saved toolbar customization once per install, never through user.js.
-function Invoke-NavbarTidy([string]$profile) {
+function Invoke-NavbarTidy([string]$profileDir) {
     if (Test-FirefoxRunning) {
         Warn 'navbar tidy skipped: firefox is running and would overwrite prefs.js; fully quit it and rerun the installer'
         return
     }
-    $path = Join-Path $profile 'prefs.js'
+    $path = Join-Path $profileDir 'prefs.js'
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return }
     $temporary = $null
     try {
@@ -223,30 +223,34 @@ function Invoke-NavbarTidy([string]$profile) {
             if ($item -isnot [string]) { throw 'navbar placements must be an array of strings' }
         }
         if ($navbar -cnotcontains 'urlbar-container') { throw 'navbar has no urlbar-container' }
+        # the search box goes directly after the urlbar, wherever it was before
+        # (another nav-bar slot or another toolbar), so drop it everywhere first
+        $before = @{}
+        foreach ($area in @($state.placements.PSObject.Properties)) {
+            if ($area.Value -isnot [System.Array]) { continue }
+            $before[$area.Name] = $area.Value -join "`n"
+            $state.placements.($area.Name) = @($area.Value | Where-Object { $_ -cne 'search-container' })
+        }
         $tidy = New-Object 'System.Collections.Generic.List[string]'
-        foreach ($item in $navbar) {
+        foreach ($item in $state.placements.'nav-bar') {
             if ($item -cne 'toolbarspring' -and $item -cnotmatch '^customizableui-special-spring\d+$') {
                 $tidy.Add($item)
             }
         }
-        if (-not $tidy.Contains('search-container')) {
-            $tidy.Insert($tidy.IndexOf('urlbar-container') + 1, 'search-container')
-        }
-        $changed = $tidy.Count -ne $navbar.Count
-        if (-not $changed) {
-            for ($i = 0; $i -lt $navbar.Count; $i++) {
-                if ($tidy[$i] -cne $navbar[$i]) { $changed = $true; break }
-            }
+        $tidy.Insert($tidy.IndexOf('urlbar-container') + 1, 'search-container')
+        $state.placements.'nav-bar' = $tidy.ToArray()
+        $changed = $false
+        foreach ($name in $before.Keys) {
+            if ((@($state.placements.$name) -join "`n") -cne $before[$name]) { $changed = $true; break }
         }
         if (-not $changed) { return }
-        $state.placements.'nav-bar' = $tidy.ToArray()
         $json = ConvertTo-Json -InputObject $state -Depth 100 -Compress
         $quoted = ConvertTo-Json -InputObject $json -Compress
         $group = $match.Groups[2]
         $updated = $text.Substring(0, $group.Index) + $quoted + $text.Substring($group.Index + $group.Length)
         $backup = "$path.bak-$Stamp"
         [System.IO.File]::Copy($path, $backup, $false)
-        $temporary = Join-Path $profile ('.prefs.js-' + [guid]::NewGuid().ToString('N'))
+        $temporary = Join-Path $profileDir ('.prefs.js-' + [guid]::NewGuid().ToString('N'))
         [System.IO.File]::WriteAllText($temporary, $updated, $utf8)
         [System.IO.File]::Replace($temporary, $path, $null)
         $temporary = $null
