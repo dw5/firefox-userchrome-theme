@@ -258,10 +258,12 @@ try:
         raise ValueError("navbar has no urlbar-container")
     placements = state["placements"]
     # the search box goes directly after the urlbar, wherever it was before
-    # (another nav-bar slot or another toolbar), so drop it everywhere first
+    # (another nav-bar slot or another toolbar), so drop it everywhere first.
+    # firefox view goes too: the old browser.tabs.firefox-view pref is ignored
+    # by current firefox, so removing the placement is the only reliable way.
     before = {area: list(items) for area, items in placements.items() if isinstance(items, list)}
     for area, items in before.items():
-        placements[area] = [item for item in items if item != "search-container"]
+        placements[area] = [item for item in items if item not in ("search-container", "firefox-view-button")]
     tidy = [item for item in placements["nav-bar"] if item != "toolbarspring" and not re.fullmatch(r"customizableui-special-spring\d+", item)]
     tidy.insert(tidy.index("urlbar-container") + 1, "search-container")
     placements["nav-bar"] = tidy

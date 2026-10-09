@@ -224,12 +224,14 @@ function Invoke-NavbarTidy([string]$profileDir) {
         }
         if ($navbar -cnotcontains 'urlbar-container') { throw 'navbar has no urlbar-container' }
         # the search box goes directly after the urlbar, wherever it was before
-        # (another nav-bar slot or another toolbar), so drop it everywhere first
+        # (another nav-bar slot or another toolbar), so drop it everywhere first.
+        # firefox view goes too: the old browser.tabs.firefox-view pref is ignored
+        # by current firefox, so removing the placement is the only reliable way.
         $before = @{}
         foreach ($area in @($state.placements.PSObject.Properties)) {
             if ($area.Value -isnot [System.Array]) { continue }
             $before[$area.Name] = $area.Value -join "`n"
-            $state.placements.($area.Name) = @($area.Value | Where-Object { $_ -cne 'search-container' })
+            $state.placements.($area.Name) = @($area.Value | Where-Object { $_ -cne 'search-container' -and $_ -cne 'firefox-view-button' })
         }
         $tidy = New-Object 'System.Collections.Generic.List[string]'
         foreach ($item in $state.placements.'nav-bar') {

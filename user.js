@@ -27,14 +27,6 @@ user_pref("browser.compactmode.show", true);
 // about:home Search Bar
 user_pref("browser.newtabpage.activity-stream.improvesearch.handoffToAwesomebar", false);
 
-// Hide Firefox View button from the tab bar
-user_pref("browser.tabs.firefox-view", false);
-
-// Separate search engine box in the nav bar.
-// Fresh profiles get the search box automatically; the installer tidies saved
-// toolbar customization once. You can still customize the toolbar afterwards.
-user_pref("browser.search.widget.inNavBar", true);
-
 // ** Useful Options ***********************************************************
 // Integrated calculator at urlbar
 user_pref("browser.urlbar.suggest.calculator", true);

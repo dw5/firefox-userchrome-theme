@@ -1,7 +1,8 @@
 {
   "policies": {
     "SearchEngines": {
-      "Default": "DuckDuckGo"
+      "Default": "DuckDuckGo",
+      "Remove": ["Google"]
     },
     "ExtensionSettings": {
       "uBlock0@raymondhill.net": {

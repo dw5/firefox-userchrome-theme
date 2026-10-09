@@ -3,7 +3,7 @@ This userchrome / config
 * Brings back compact mode (Firefox 89)
 * Removes Unified extensions menu (thing firefox copied from google... a bit late)
 * Hide Firefox login (email address)
-* Default search engine = DuckDuckGo (enforced via policies.json, stops reverting)
+* Default search engine = DuckDuckGo, Google removed from the engine list (enforced via policies.json, stops reverting)
 * Preinstalls uBlock Origin (removable; set `force_installed` in policies.json to lock it)
 * Hides the Firefox View button from the tab bar
 * Drops the spacers left/right of the urlbar (urlbar stretches instead)
@@ -40,7 +40,7 @@ pick a profile when asked, then restart firefox. done.
   (asks for admin/root) - this is needed for the locked new-tab-page prefs
   since `user.js` only supports `user_pref()`
 * installs `policies.json` into `<firefox install dir>/distribution/`
-  - default search engine = DuckDuckGo (enforced, survives updates)
+  - default search engine = DuckDuckGo, Google removed (enforced, survives updates)
   - auto-installs uBlock Origin (`normal_installed` - you can still remove it;
     change to `"force_installed"` in the file to make it permanent)
   - if you already have your own `policies.json` it gets backed up first
@@ -52,16 +52,18 @@ pick a profile when asked, then restart firefox. done.
 * fully quit Firefox (not just close its windows) before installing. while it is
   running, the installer skips navbar tidying with a warning; quit and rerun.
 * once per install, the installer edits the profile's own saved toolbar state in
-  `prefs.js`: removes flexible spacers and puts the search box directly after
-  the urlbar (adding it if absent, moving it if it sits anywhere else).
+  `prefs.js`: removes flexible spacers, removes the Firefox View button, and puts
+  the search box directly after the urlbar (adding it if absent, moving it if it
+  sits anywhere else).
 * before changing `prefs.js`, it copies it to `prefs.js.bak-<timestamp>`.
-  absent customization state is skipped silently; fresh profiles get the search
-  box through `browser.search.widget.inNavBar` in `user.js`.
+* a brand-new profile has no saved toolbar state yet, so the step is skipped:
+  start Firefox once, fully quit it, then rerun the installer.
 * Linux requires `python3` for this step; if unavailable, it warns and skips it.
 * these are saved customization changes, not CSS ordering rules or a toolbar
   state frozen in `user.js`. you can still customize the toolbar afterwards.
-  rerunning the installer removes newly added spacers again.
-* Firefox View is hidden through `browser.tabs.firefox-view` in `user.js`.
+  rerunning the installer applies the tidy again (e.g. after "Restore Defaults").
+* no `user.js` prefs are used for this: `browser.tabs.firefox-view` and
+  `browser.search.widget.inNavBar` are ignored by current Firefox (ESR 153).
 * uninstall leaves `prefs.js` and its backups untouched. to roll back the toolbar
   change manually, fully quit Firefox and copy the desired backup over `prefs.js`.
 
